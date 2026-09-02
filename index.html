@@ -336,7 +336,13 @@ function checkAlerts(){
   const b=document.getElementById('alertbadge');if(b){if(totalNew>0){b.style.display='';b.textContent=totalNew;}else b.style.display='none';}
   notes.forEach(x=>{try{new Notification("🦒 "+x.n+" new · "+x.a.name,{body:x.top?x.top.co+" — "+x.top.role:""});}catch(e){}});
 }
+let AUTOREFRESH=(()=>{try{const v=localStorage.getItem("giraffy.autorefresh");if(v!==null)return parseInt(v)||0;}catch(e){}return 10;})();
+let lastRefresh=0;let refreshTimer=null;
+function scheduleRefresh(){if(refreshTimer)clearInterval(refreshTimer);if(AUTOREFRESH>0)refreshTimer=setInterval(()=>{if(document.visibilityState==='visible')doRefresh();},AUTOREFRESH*60000);}
+function doRefresh(){loadJobs();}
+window.setAR=m=>{AUTOREFRESH=m;try{localStorage.setItem("giraffy.autorefresh",m)}catch(e){}scheduleRefresh();toast(m?("Auto-refresh: every "+m+" min"):"Auto-refresh off",m?"GiraffyReach will re-scan and alert you.":"","accent");if(CUR==='alerts')render('alerts');};
 async function loadJobs(){
+  const prevIds=new Set(JOBS.map(j=>j.id));const wasLoaded=LOADED;
   let done=0;const all=[];
   const tasks=BOARDS.map(b=>fetchBoard(b).then(r=>{done++;
     const pct=Math.round(done/BOARDS.length*100);
@@ -346,7 +352,8 @@ async function loadJobs(){
   await Promise.all(tasks);
   let liveFeed=false;
   try{const g=await fetchGiraffy();if(g&&g.length){all.length=0;all.push(...g);liveFeed=true;}}catch(e){}
-  JOBS=all;rankJobs();LOADED=true;
+  JOBS=all;rankJobs();LOADED=true;lastRefresh=Date.now();
+  if(wasLoaded){let nc=0;JOBS.forEach(j=>{j.isNew=!prevIds.has(j.id);if(j.isNew)nc++;});if(nc)toast(nc+" new role"+(nc>1?"s":""),"Fresh matches just landed on your radar","accent");}
   const ok=[...new Set(all.map(j=>j.co))];
   const pl=document.getElementById("srcpill"),tx=document.getElementById("srctxt");
   if(pl){pl.textContent=liveFeed?"your feed":ok.length+" live";pl.className="pill good";}
@@ -424,7 +431,7 @@ function jobRow(j){
   const fresh=ageMins(j.updated)<1440;
   return `<div class="job">${logo(j.co,j.color)}
     <div><div class="t">${esc(j.role)}</div>
-      <div class="m"><b>${esc(j.co)}</b>${j.loc?" · "+esc(j.loc):""}${j.dept?` <span class="tag">${esc(j.dept)}</span>`:""}${j.type?` <span class="tag">${esc(j.type)}</span>`:""}${j.contract?` <span class="pill accent" style="font-size:10px">${j.c2c?'C2C':'Contract'}</span>`:""}
+      <div class="m">${j.isNew?'<span class="pill accent" style="font-size:9.5px;padding:1px 6px">NEW</span> ':''}<b>${esc(j.co)}</b>${j.loc?" · "+esc(j.loc):""}${j.dept?` <span class="tag">${esc(j.dept)}</span>`:""}${j.type?` <span class="tag">${esc(j.type)}</span>`:""}${j.contract?` <span class="pill accent" style="font-size:10px">${j.c2c?'C2C':'Contract'}</span>`:""}
         <span>· via ${j.ats}</span> · <span class="${fresh?'fresh':'muted'}">${ageLabel(j.updated)}</span></div></div>
     ${ring(j.match)}
     <a class="btn pri sm" href="${esc(j.url)}" target="_blank" rel="noopener" onclick='trackApply(${JSON.stringify(j.id).replace(/'/g,"&#39;")})'>Apply →</a></div>`;
@@ -694,6 +701,10 @@ V.alerts=()=>{
     <div style="flex:1;min-width:200px"><b>Desktop notifications</b><div class="tiny muted">${perm==="granted"?"On — you'll get a ping when new matches appear.":perm==="unsupported"?"Not supported in this browser.":"Off — enable to get pinged for new matches."}</div></div>
     ${perm==="granted"?'<span class="pill good">enabled</span>':perm==="unsupported"?'':'<button class="btn sm" onclick="enableNotifs()">Enable notifications</button>'}
   </div>
+  <div class="card pad" style="margin-bottom:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <div style="flex:1;min-width:200px"><b>Live auto-refresh</b><div class="tiny muted">${AUTOREFRESH?`Re-scanning every ${AUTOREFRESH} min — you'll see new roles the moment they post.`:"Off — the feed refreshes only when you reload."}</div></div>
+    <select onchange="setAR(+this.value)" style="max-width:160px">${[[0,"Off"],[5,"Every 5 min"],[10,"Every 10 min"],[15,"Every 15 min"],[30,"Every 30 min"]].map(([v,l])=>`<option value="${v}" ${AUTOREFRESH===v?'selected':''}>${l}</option>`).join("")}</select>
+  </div>
   <div class="section-head"><h3>Your alerts</h3>${(S.alerts||[]).length?`<button class="btn ghost sm" onclick="markSeen('all')">Mark all seen</button>`:''}</div>
   <div class="grid" style="margin-bottom:20px">
     ${(S.alerts||[]).map(a=>`<div class="card pad" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -763,6 +774,8 @@ let stoTimer;$("#globalsearch").addEventListener('input',e=>{RADSEARCH=e.target.
 
 render('dashboard');
 loadJobs();
+scheduleRefresh();
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&AUTOREFRESH>0&&Date.now()-lastRefresh>AUTOREFRESH*60000)doRefresh();});
 </script>
 </body>
 </html>
