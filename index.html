@@ -295,6 +295,8 @@ let S=load();let JOBS=[];let LOADED=false;
 function load(){let r=null;try{r=JSON.parse(localStorage.getItem(KEY))}catch(e){}
   if(!r||!r.pipeline)r={profile:DEFAULT_RESUME,pipeline:[]};
   if(!r.me)r.me=DEFAULT_ME();
+  if(!r.alerts)r.alerts=[{id:"a1",name:"AI · Remote · 90%+",filter:"ai",query:"",minMatch:90,notify:true,seen:[]}];
+  if(!r.autopilot)r.autopilot={on:false,minMatch:88,ai:true,remote:false,contract:false};
   return r;}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
 function profileKw(){
@@ -315,6 +317,25 @@ function scoreJob(j,kw){
 function rankJobs(){const kw=profileKw();JOBS.forEach(j=>j.match=scoreJob(j,kw));
   JOBS.sort((a,b)=>b.match-a.match||b.updated-a.updated);}
 
+function filterJobs(fk,q,minMatch){
+  let list=JOBS.slice();
+  if(fk==="ai")list=list.filter(j=>/\b(ai|ml|machine learning|llm|data|scien|research|model)\b/i.test(j.role+" "+j.dept));
+  else if(fk==="remote")list=list.filter(j=>j.remote||/remote/i.test(j.loc));
+  else if(fk==="eng")list=list.filter(j=>/engineer|developer|software|platform|infrastructure|backend|frontend|full.?stack/i.test(j.role+" "+j.dept));
+  else if(fk==="contract")list=list.filter(j=>j.contract);
+  if(minMatch)list=list.filter(j=>j.match>=minMatch);
+  if(q){const s=q.toLowerCase();list=list.filter(j=>(j.role+" "+j.co+" "+j.loc+" "+j.dept).toLowerCase().includes(s));}
+  return list;
+}
+function checkAlerts(){
+  if(!S.alerts)return;let totalNew=0;const notes=[];
+  S.alerts.forEach(a=>{const list=filterJobs(a.filter,a.query,a.minMatch);const ids=list.map(j=>j.id);
+    const seen=a.seen||[];const fresh=ids.filter(id=>!seen.includes(id));
+    a._count=list.length;a._new=fresh.length;totalNew+=fresh.length;
+    if(a.notify&&fresh.length&&("Notification" in window)&&Notification.permission==="granted")notes.push({a,n:fresh.length,top:list[0]});});
+  const b=document.getElementById('alertbadge');if(b){if(totalNew>0){b.style.display='';b.textContent=totalNew;}else b.style.display='none';}
+  notes.forEach(x=>{try{new Notification("🦒 "+x.n+" new · "+x.a.name,{body:x.top?x.top.co+" — "+x.top.role:""});}catch(e){}});
+}
 async function loadJobs(){
   let done=0;const all=[];
   const tasks=BOARDS.map(b=>fetchBoard(b).then(r=>{done++;
@@ -333,7 +354,8 @@ async function loadJobs(){
   document.querySelector('.nav-item[data-v="radar"] .live')&&0;
   const b=document.querySelector('.nav-item[data-v="radar"]');
   if(b){const badge=b.querySelector('.badge');}
-  if(CUR==="radar"||CUR==="dashboard")render(CUR);
+  checkAlerts();
+  if(CUR==="radar"||CUR==="dashboard"||CUR==="alerts")render(CUR);
 }
 
 const STAGES=["Saved","Applied","Recruiter","Interview","Offer","Rejected"];
@@ -357,6 +379,7 @@ const NAV=[
   ["dashboard","Dashboard",'<path d="M3 13h8V3H3zM13 21h8V3h-8zM3 21h8v-6H3z"/>'],
   ["profile","Profile",'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'],
   ["radar","Job Radar",'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/>',"live"],
+  ["alerts","Alerts",'<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10 21h4"/>'],
   ["resume","Resume Studio",'<path d="M6 2h9l4 4v16H6z"/><path d="M14 2v5h5M9 13h6M9 17h6"/>'],
   ["cover","Cover Letters",'<path d="M3 5h18v14H3z"/><path d="m3 6 9 7 9-7"/>'],
   ["apply","Auto-Apply",'<path d="M5 12h14M13 6l6 6-6 6"/>'],
@@ -483,15 +506,32 @@ window.genCover=()=>{
     <div style="display:flex;gap:8px;margin-top:14px"><button class="btn sm" onclick="genCover()">Regenerate</button></div>`;
   toast("Cover letter drafted","In your voice for "+p.co);};
 
+function apMatches(){const ap=S.autopilot||{};let list=JOBS.filter(j=>j.match>=(ap.minMatch||0));
+  if(ap.ai)list=list.filter(j=>/\b(ai|ml|machine learning|llm|data|scien|research|model)\b/i.test(j.role+" "+j.dept));
+  if(ap.remote)list=list.filter(j=>j.remote||/remote/i.test(j.loc));
+  if(ap.contract)list=list.filter(j=>j.contract);
+  return list.slice(0,12);}
+window.setAP=(k,v)=>{S.autopilot=S.autopilot||{};S.autopilot[k]=v;save();render('apply');};
+window.approveAll=()=>{const q=apMatches();let n=0;q.forEach(j=>{if(!S.pipeline.some(p=>p.srcId===j.id)){S.pipeline.unshift({id:"p"+Date.now()+Math.random(),srcId:j.id,co:j.co,color:j.color,role:j.role,match:j.match,stage:"Saved",ats:j.ats,url:j.url});n++;}});save();paintBadges();toast("Autopilot shortlisted "+n,"Added to your tracker under “Saved” for review","accent");render('apply');};
 V.apply=()=>{
-  const q=JOBS.filter(j=>j.match>=88).slice(0,6);
-  return `<div class="page-head"><div class="eyebrow">Submission · Apply</div><h1>Auto-Apply</h1>
-    <p><b>Honest note:</b> actually auto-submitting to ATSes hits CAPTCHAs & bot-detection and breaks most platforms' terms — so GiraffyReach keeps a human in the loop. "Apply" opens the real posting pre-ranked; you confirm on the company's site.</p></div>
-  <div class="section-head"><h3>Your best live matches ${LOADED?`<span class="pill accent">${q.length}</span>`:''}</h3></div>
-  <div class="card"><div class="feed">${LOADED?(q.length?q.map(jobRow).join(""):`<div class="empty">No 88%+ matches loaded yet.</div>`):skel(5)}</div></div>
+  const ap=S.autopilot||{};const q=apMatches();
+  return `<div class="page-head"><div class="eyebrow">Submission · Autopilot</div><h1>Auto-Apply</h1>
+    <p><b>Honest note:</b> auto-submitting to ATSes hits CAPTCHAs & bot-detection and breaks most platforms' terms — so GiraffyReach keeps a human in the loop. Autopilot builds your queue automatically; you approve, then confirm on the company's site.</p></div>
+  <div class="card pad" style="margin-bottom:16px">
+    <div class="section-head"><h3>Autopilot rules</h3><span class="pill ${ap.on?'good':'neutral'}">${ap.on?'ON':'off'}</span></div>
+    <div style="display:flex;gap:16px 20px;flex-wrap:wrap;align-items:center">
+      <label class="tiny" style="display:flex;gap:7px;align-items:center;font-weight:600"><input type="checkbox" ${ap.on?'checked':''} onchange="setAP('on',this.checked)"> Enable autopilot</label>
+      <label class="tiny" style="display:flex;gap:8px;align-items:center">Min match <b class="mono">${ap.minMatch}%</b><input type="range" min="60" max="99" value="${ap.minMatch}" onchange="setAP('minMatch',+this.value)"></label>
+      <label class="chip ${ap.ai?'on':''}"><input type="checkbox" ${ap.ai?'checked':''} style="display:none" onchange="setAP('ai',this.checked)">AI / ML only</label>
+      <label class="chip ${ap.remote?'on':''}"><input type="checkbox" ${ap.remote?'checked':''} style="display:none" onchange="setAP('remote',this.checked)">Remote only</label>
+      <label class="chip ${ap.contract?'on':''}"><input type="checkbox" ${ap.contract?'checked':''} style="display:none" onchange="setAP('contract',this.checked)">C2C / Contract</label>
+    </div>
+  </div>
+  <div class="section-head"><h3>Queue ${LOADED?`<span class="pill accent">${q.length}</span>`:''}</h3>${LOADED&&q.length?`<button class="btn pri sm" onclick="approveAll()">Shortlist all → tracker</button>`:''}</div>
+  <div class="card"><div class="feed">${LOADED?(q.length?q.map(jobRow).join(""):`<div class="empty">No roles match your autopilot rules — loosen them above.</div>`):skel(5)}</div></div>
   <div class="card pad" style="margin-top:16px">
-    <h3 style="margin-bottom:8px">What a full auto-submit build needs</h3>
-    ${[["Playwright headed browser on your machine","GiraffyReach & your pipeline both run this way"],["CAPTCHA handling (human-in-loop)","reCAPTCHA can't be run hands-off in the cloud"],["Per-ATS form maps (Greenhouse, Workday…)","field mapping + file upload per platform"],["Profile + resume store","one source of truth to fill forms"]].map(([a,b])=>`<div class="row"><span class="pill warn" style="width:8px;height:8px;padding:0;border-radius:50%"></span><div style="flex:1"><b style="font-size:13.5px">${a}</b><div class="tiny muted">${b}</div></div></div>`).join("")}
+    <h3 style="margin-bottom:8px">What full one-click auto-submit needs</h3>
+    ${[["Playwright headed browser on your machine","real form submission per ATS"],["CAPTCHA handling (human-in-loop)","reCAPTCHA can't run hands-off in the cloud"],["Per-ATS form maps (Greenhouse, Workday…)","field mapping + file upload per platform"],["Profile + résumé store","one source of truth to fill forms — already in Profile"]].map(([a,b])=>`<div class="row"><span class="pill warn" style="width:8px;height:8px;padding:0;border-radius:50%"></span><div style="flex:1"><b style="font-size:13.5px">${a}</b><div class="tiny muted">${b}</div></div></div>`).join("")}
   </div>`;
 };
 
@@ -646,6 +686,40 @@ window.connectSource=()=>{const u=(document.getElementById('p-src-url')||{}).val
   if(u.trim()){LOADED=false;render(CUR);loadJobs();}};
 window.clearSource=()=>{try{localStorage.removeItem("giraffy.source")}catch(e){}toast("Disconnected","Back to public sample sources","accent");LOADED=false;render(CUR);loadJobs();};
 
+V.alerts=()=>{
+  const perm=("Notification" in window)?Notification.permission:"unsupported";
+  return `<div class="page-head"><div class="eyebrow">Be first</div><h1>Alerts &amp; Saved Searches</h1>
+    <p>Save a search once — GiraffyReach re-checks it every time the feed refreshes, flags what's new, and can ping you the moment fresh roles land, so you're in the first wave of applicants.</p></div>
+  <div class="card pad" style="margin-bottom:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <div style="flex:1;min-width:200px"><b>Desktop notifications</b><div class="tiny muted">${perm==="granted"?"On — you'll get a ping when new matches appear.":perm==="unsupported"?"Not supported in this browser.":"Off — enable to get pinged for new matches."}</div></div>
+    ${perm==="granted"?'<span class="pill good">enabled</span>':perm==="unsupported"?'':'<button class="btn sm" onclick="enableNotifs()">Enable notifications</button>'}
+  </div>
+  <div class="section-head"><h3>Your alerts</h3>${(S.alerts||[]).length?`<button class="btn ghost sm" onclick="markSeen('all')">Mark all seen</button>`:''}</div>
+  <div class="grid" style="margin-bottom:20px">
+    ${(S.alerts||[]).map(a=>`<div class="card pad" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:180px"><div style="font-weight:600">${esc(a.name)} ${a._new?`<span class="pill accent" style="font-size:10px">${a._new} new</span>`:''}</div>
+        <div class="tiny muted">${a._count||0} live · ${a.filter} · ≥${a.minMatch}%${a.query?` · "${esc(a.query)}"`:''} · ${a.notify?'🔔':'🔕'}</div></div>
+      <button class="btn sm" onclick="viewAlert('${a.id}')">View</button>
+      <button class="btn ghost sm" onclick="toggleNotify('${a.id}')">${a.notify?'Mute':'Notify'}</button>
+      <button class="btn ghost sm" onclick="delAlert('${a.id}')" aria-label="Delete">✕</button>
+    </div>`).join("")||'<div class="empty">No alerts yet — create one below.</div>'}
+  </div>
+  <div class="card pad"><h3 style="margin-bottom:12px">New alert</h3>
+    <div class="field"><label>Name</label><input type="text" id="al-name" placeholder="e.g. Staff ML · Remote"></div>
+    <div class="two"><div class="field"><label>Filter</label><select id="al-filter">${[["all","All"],["ai","AI / ML"],["remote","Remote"],["eng","Engineering"],["contract","C2C / Contract"]].map(([k,l])=>`<option value="${k}">${l}</option>`).join("")}</select></div>
+      <div class="field"><label>Min match %</label><input type="text" id="al-min" value="85"></div></div>
+    <div class="field"><label>Keyword (optional)</label><input type="text" id="al-q" placeholder="e.g. platform"></div>
+    <label class="tiny" style="display:flex;gap:8px;align-items:center;margin-bottom:12px"><input type="checkbox" id="al-notify" checked> Notify me when new matches appear</label>
+    <button class="btn pri" onclick="addAlert()">Save alert</button></div>`;
+};
+window.enableNotifs=()=>{if("Notification" in window)Notification.requestPermission().then(()=>render('alerts'));};
+window.addAlert=()=>{const name=($("#al-name").value||"").trim()||"Alert";const filter=$("#al-filter").value;const minMatch=parseInt($("#al-min").value)||0;const query=($("#al-q").value||"").trim();const notify=$("#al-notify").checked;
+  S.alerts.push({id:"a"+Date.now(),name,filter,minMatch,query,notify,seen:[]});save();checkAlerts();render('alerts');toast("Alert saved",name);};
+window.delAlert=id=>{S.alerts=S.alerts.filter(a=>a.id!==id);save();checkAlerts();render('alerts');};
+window.toggleNotify=id=>{const a=S.alerts.find(x=>x.id===id);if(a){a.notify=!a.notify;save();render('alerts');}};
+window.markSeen=id=>{(S.alerts||[]).forEach(a=>{if(id==='all'||a.id===id)a.seen=filterJobs(a.filter,a.query,a.minMatch).map(j=>j.id);});save();checkAlerts();render('alerts');};
+window.viewAlert=id=>{const a=S.alerts.find(x=>x.id===id);if(!a)return;a.seen=filterJobs(a.filter,a.query,a.minMatch).map(j=>j.id);save();RADFILTER=a.filter;RADSEARCH=a.query||"";const gs=document.getElementById('globalsearch');if(gs)gs.value=a.query||"";checkAlerts();go('radar');};
+
 V.features=()=>{
   const F=[
     ["Live Job Radar","REAL — official Greenhouse & Ashby APIs, ranked to your profile.",'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/>',"WORKING NOW"],
@@ -672,7 +746,10 @@ window.go=v=>{render(v);closeNav();};
 function paintBadges(){const b=document.querySelector('.nav-item[data-v="tracker"] .badge');if(b)b.textContent=S.pipeline.length;}
 
 $("#navmain").innerHTML=NAV.map((n,i)=>{const[v,label,,extra]=n;
-  const tail=extra==="live"?'<span class="live"></span>':(v==="tracker"?`<span class="badge">${S.pipeline.length}</span>`:'');
+  let tail='';
+  if(extra==="live")tail='<span class="live"></span>';
+  else if(v==="tracker")tail=`<span class="badge">${S.pipeline.length}</span>`;
+  else if(v==="alerts")tail=`<span class="badge" id="alertbadge" style="display:none">0</span>`;
   return `<button class="nav-item ${i===0?'on':''}" data-v="${v}" onclick="go('${v}')">${icon(n[2])}<span>${label}</span>${tail}</button>`;}).join("");
 
 (function(){const saved=(()=>{try{return localStorage.getItem('crackit.theme')}catch(e){return null}})();
