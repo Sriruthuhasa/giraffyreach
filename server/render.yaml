@@ -1,4 +1,10 @@
 # One-click deploy on Render (https://render.com). Push this repo, then "New → Blueprint".
+databases:
+  - name: giraffyreach-db
+    plan: free
+    databaseName: giraffyreach
+    ipAllowList: []          # only reachable from your Render services
+
 services:
   - type: web
     name: giraffyreach-api
@@ -8,15 +14,13 @@ services:
     buildCommand: npm install
     startCommand: node server.js
     envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: giraffyreach-db
+          property: connectionString
       - key: JWT_SECRET
         generateValue: true
       - key: ANTHROPIC_API_KEY
         sync: false          # set this yourself in the Render dashboard (secret)
       - key: ANTHROPIC_MODEL
         value: claude-opus-5
-      - key: DB_PATH
-        value: /var/data/giraffyreach.db
-    disk:
-      name: data
-      mountPath: /var/data
-      sizeGB: 1

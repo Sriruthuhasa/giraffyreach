@@ -1,19 +1,22 @@
 # 🦒 GiraffyReach Backend
 
-A complete Node/Express + SQLite backend for GiraffyReach: accounts & JWT auth, a real database for profiles / pipeline / alerts, server-side job aggregation with a scheduled 20-minute refresh, server-held AI (Claude), and recruiter open/click tracking.
+A complete Node/Express + **PostgreSQL** backend for GiraffyReach: accounts & JWT auth, a durable database for profiles / pipeline / alerts, server-side job aggregation with a scheduled 20-minute refresh, server-held AI (Claude), and recruiter open/click tracking.
 
-No external database required — persistence is a single SQLite file.
+Data is stored in Postgres, so it survives restarts and redeploys.
 
 ## Run locally
 
 ```bash
 cd server
-cp .env.example .env        # then edit .env
+cp .env.example .env         # then edit .env
 npm install
+# need a Postgres — quickest is Docker:
+docker run -d --name gr-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=giraffyreach -p 5432:5432 postgres:16
+# in .env: DATABASE_URL=postgres://postgres:postgres@localhost:5432/giraffyreach
 npm start                    # http://localhost:8787
 ```
 
-Set at least `JWT_SECRET` (any long random string) and, for AI features, `ANTHROPIC_API_KEY`.
+Set `DATABASE_URL`, `JWT_SECRET` (any long random string), and — for AI — `ANTHROPIC_API_KEY`. The schema is created automatically on boot.
 
 Check it's up:
 ```bash
@@ -48,13 +51,13 @@ Auth: send `Authorization: Bearer <token>` on the ✓ routes.
 
 ## Deploy (free)
 
-**Render** — push this repo, then New → Blueprint (it reads `server/render.yaml`). Set `ANTHROPIC_API_KEY` in the dashboard. Gives you `https://giraffyreach-api.onrender.com`.
+**Render** — push this repo, then New → Blueprint (it reads `server/render.yaml`, which also provisions a free Postgres and injects `DATABASE_URL`). Set `ANTHROPIC_API_KEY` in the dashboard. For an existing web service, create a Postgres database and add its Internal `DATABASE_URL` as an env var on the service, then redeploy.
 
 **Docker** — `docker build -t giraffyreach-api server && docker run -p 8787:8787 --env-file server/.env giraffyreach-api`
 
 **Fly.io / Railway** — any Node host works; start command `node server.js`, root `server/`.
 
 ## Notes
-- Storage uses Node's built-in `node:sqlite` (Node 22.5+/24) — no native compilation, no build tools, `npm install` only pulls pure-JS deps.
+- Storage is PostgreSQL via the pure-JS `pg` driver — no native compilation. The schema auto-creates on boot.
 - CORS is open so the static GitHub Pages frontend can call the API. To lock it down, replace `cors()` with an allow-list of your Pages origin.
 - Tracking pixels and cold outreach have deliverability/privacy implications — use responsibly and comply with applicable law.

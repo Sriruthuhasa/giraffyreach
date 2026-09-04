@@ -3,6 +3,7 @@ const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const cron = require("node-cron");
+const db = require("./db");
 const jobsLib = require("./lib/jobs");
 
 const app = express();
@@ -29,8 +30,10 @@ app.use(express.static(path.join(__dirname, "..")));
 
 const PORT = process.env.PORT || 8787;
 
-// Warm the job cache on boot, then refresh every 20 minutes ("within-the-hour").
+// Init DB schema, then warm the job cache; refresh jobs every 20 minutes ("within-the-hour").
 (async () => {
+  try { await db.init(); console.log("[db] schema ready"); }
+  catch (e) { console.error("[db] init failed:", e.message); }
   try { await jobsLib.refresh(); console.log("[jobs] warmed:", jobsLib.cache().jobs.length, "roles"); }
   catch (e) { console.error("[jobs] warm failed:", e.message); }
 })();

@@ -1,27 +1,34 @@
 const express = require("express");
-const db = require("../db");
+const { pool } = require("../db");
 const { requireAuth } = require("../lib/auth");
 
 const router = express.Router();
 router.use(requireAuth);
 
-router.get("/", (req, res) => {
-  const rows = db.prepare("SELECT data FROM pipeline WHERE user_id = ? ORDER BY updated DESC").all(req.user.uid);
-  res.json({ pipeline: rows.map((r) => JSON.parse(r.data)) });
+router.get("/", async (req, res) => {
+  const r = await pool.query("SELECT data FROM pipeline WHERE user_id = $1 ORDER BY updated DESC", [req.user.uid]);
+  res.json({ pipeline: r.rows.map((x) => JSON.parse(x.data)) });
 });
 
-// Replace the whole pipeline (simplest reliable sync from the client).
-router.put("/", (req, res) => {
+// Replace the whole pipeline (simplest reliable sync from the client), in a transaction.
+router.put("/", async (req, res) => {
   const items = Array.isArray(req.body.pipeline) ? req.body.pipeline : [];
-  const del = db.prepare("DELETE FROM pipeline WHERE user_id = ?");
-  const ins = db.prepare("INSERT INTO pipeline (id, user_id, data) VALUES (?, ?, ?)");
-  db.exec("BEGIN");
+  const client = await pool.connect();
   try {
-    del.run(req.user.uid);
-    items.forEach((it) => ins.run(String(it.id || Date.now() + "" + Math.random()), req.user.uid, JSON.stringify(it)));
-    db.exec("COMMIT");
-  } catch (e) { db.exec("ROLLBACK"); return res.status(500).json({ error: e.message }); }
-  res.json({ ok: true, count: items.length });
+    await client.query("BEGIN");
+    await client.query("DELETE FROM pipeline WHERE user_id = $1", [req.user.uid]);
+    for (const it of items) {
+      await client.query("INSERT INTO pipeline (id, user_id, data) VALUES ($1, $2, $3)",
+        [String(it.id || Date.now() + "" + Math.random()), req.user.uid, JSON.stringify(it)]);
+    }
+    await client.query("COMMIT");
+    res.json({ ok: true, count: items.length });
+  } catch (e) {
+    await client.query("ROLLBACK");
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
 });
 
 module.exports = router;
