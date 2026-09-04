@@ -255,6 +255,38 @@ async function aiGenerate(system,user,maxTokens){
   if(!r.ok)throw new Error("Claude "+r.status+": "+(await r.text()).slice(0,140));
   const d=await r.json();return (d.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n").trim();
 }
+
+/* ============================================================
+   BACKEND (optional): accounts, cross-device sync, server-side
+   jobs & AI. Connect in Profile → Backend. Stored only locally.
+   ============================================================ */
+function beCfg(){try{const c=JSON.parse(localStorage.getItem("giraffy.backend"));if(c&&c.url&&c.token)return c;}catch(e){}return null;}
+async function apiCall(base,pathname,method,body,token){
+  const url=(base||"").replace(/\/+$/,"")+pathname;const headers={"content-type":"application/json"};if(token)headers.Authorization="Bearer "+token;
+  const r=await fetch(url,{method:method||"GET",headers,body:body?JSON.stringify(body):undefined});
+  const txt=await r.text();let data;try{data=txt?JSON.parse(txt):{}}catch(e){data={raw:txt};}
+  if(!r.ok)throw new Error((data&&data.error)||("HTTP "+r.status));return data;}
+async function beAuth(kind){const url=((document.getElementById('be-url')||{}).value||"").trim();const email=((document.getElementById('be-email')||{}).value||"").trim();const pw=(document.getElementById('be-pw')||{}).value||"";
+  if(!url||!email||!pw){toast("Fill URL, email & password","","crit");return;}
+  try{const d=await apiCall(url,"/api/auth/"+kind,"POST",{email,password:pw});
+    localStorage.setItem("giraffy.backend",JSON.stringify({url:url.replace(/\/+$/,""),token:d.token,email:d.user.email}));
+    toast(kind==="register"?"Account created":"Logged in","Syncing your data…","accent");
+    await bePull();updateAvatar();LOADED=false;render('profile');loadJobs();
+  }catch(e){toast("Backend error",e.message,"crit");}}
+window.beRegister=()=>beAuth("register");
+window.beLogin=()=>beAuth("login");
+window.beDisconnect=()=>{try{localStorage.removeItem("giraffy.backend")}catch(e){}toast("Backend disconnected","Now using local storage only.","accent");LOADED=false;render('profile');loadJobs();};
+async function bePull(){const c=beCfg();if(!c)return;
+  try{const p=await apiCall(c.url,"/api/profile","GET",null,c.token);if(p.me&&Object.keys(p.me).length)S.me=p.me;if(typeof p.resume==="string"&&p.resume)S.profile=p.resume;
+    const pl=await apiCall(c.url,"/api/pipeline","GET",null,c.token);if(pl.pipeline)S.pipeline=pl.pipeline;
+    const al=await apiCall(c.url,"/api/alerts","GET",null,c.token);if(al.alerts&&al.alerts.length)S.alerts=al.alerts;
+    rankJobs();save(true);}catch(e){toast("Sync (pull) failed",e.message,"crit");}}
+let _syncT=null;
+function syncUp(){const c=beCfg();if(!c)return;clearTimeout(_syncT);_syncT=setTimeout(async()=>{
+  try{await apiCall(c.url,"/api/profile","PUT",{me:S.me,resume:S.profile},c.token);
+    await apiCall(c.url,"/api/pipeline","PUT",{pipeline:S.pipeline},c.token);
+    await apiCall(c.url,"/api/alerts","PUT",{alerts:S.alerts},c.token);}catch(e){}
+},800);}
 const MAX_PER_BOARD=40;
 
 async function fetchBoard(b){
@@ -318,7 +350,7 @@ function load(){let r=null;try{r=JSON.parse(localStorage.getItem(KEY))}catch(e){
   if(!r.alerts)r.alerts=[{id:"a1",name:"AI · Remote · 90%+",filter:"ai",query:"",minMatch:90,notify:true,seen:[]}];
   if(!r.autopilot)r.autopilot={on:false,minMatch:88,ai:true,remote:false,contract:false};
   return r;}
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+function save(skipSync){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}if(!skipSync)syncUp();}
 function profileKw(){
   const stop=new Set("the a an and or to of in on for with years year experience".split(" "));
   const src=((S.profile||"")+" "+((S.me&&S.me.targets)||"")+" "+((S.me&&S.me.headline)||"")).toLowerCase();
@@ -363,6 +395,16 @@ function doRefresh(){loadJobs();}
 window.setAR=m=>{AUTOREFRESH=m;try{localStorage.setItem("giraffy.autorefresh",m)}catch(e){}scheduleRefresh();toast(m?("Auto-refresh: every "+m+" min"):"Auto-refresh off",m?"GiraffyReach will re-scan and alert you.":"","accent");if(CUR==='alerts')render('alerts');};
 async function loadJobs(){
   const prevIds=new Set(JOBS.map(j=>j.id));const wasLoaded=LOADED;
+  const be=beCfg();
+  if(be){
+    try{const d=await apiCall(be.url,"/api/jobs","GET",null,be.token);JOBS=d.jobs||[];LOADED=true;lastRefresh=Date.now();
+      if(wasLoaded){let nc=0;JOBS.forEach(j=>{j.isNew=!prevIds.has(j.id);if(j.isNew)nc++;});if(nc)toast(nc+" new role"+(nc>1?"s":""),"Fresh matches just landed","accent");}
+      const pl=document.getElementById("srcpill"),tx=document.getElementById("srctxt");
+      if(pl){pl.textContent="server";pl.className="pill good";}
+      if(tx)tx.innerHTML=`<b style="color:var(--ink)">${JOBS.length}</b> roles · ${d.companies} companies · your backend`;
+      checkAlerts();if(CUR==="radar"||CUR==="dashboard"||CUR==="alerts")render(CUR);return;
+    }catch(e){toast("Backend jobs failed — using public feeds",e.message,"crit");}
+  }
   let done=0;const all=[];
   const tasks=BOARDS.map(b=>fetchBoard(b).then(r=>{done++;
     const pct=Math.round(done/BOARDS.length*100);
@@ -502,10 +544,11 @@ V.resume=()=>`<div class="page-head"><div class="eyebrow">Materials · Prep · R
     <div class="card pad" id="ats-out"><div class="empty">${icon('<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>')}<div>Run a scan to see your real ATS match score and missing keywords.</div></div></div>
   </div>`;
 window.saveProfile=()=>{S.profile=$("#res-r").value;save();rankJobs();toast("Profile saved","Radar match scores updated to your resume.","accent");};
-window.aiOptimize=async()=>{if(!aiCfg()){toast("Connect an AI key","Profile → AI engine to enable this.","crit");return;}
+window.aiOptimize=async()=>{if(!beCfg()&&!aiCfg()){toast("Enable AI","Profile → Backend (or AI engine) to enable this.","crit");return;}
   const res=($("#res-r").value||""),jd=($("#res-j").value||"");const out=$("#ats-out");
   out.innerHTML=`<div class="empty">${icon('<path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M2 12h4M18 12h4"/>')}<div>Optimizing your résumé with AI…</div></div>`;
-  try{const r=await aiGenerate("You are an expert résumé writer. Rewrite the résumé to naturally incorporate the important keywords from the job description while staying truthful to the candidate's real experience. Keep it ATS-friendly, concise, plain text. Never invent employers, titles, or dates.","RESUME:\n"+res+"\n\nJOB DESCRIPTION:\n"+jd,900);
+  try{let r;if(beCfg()){const c=beCfg();r=(await apiCall(c.url,"/api/ai/resume-optimize","POST",{resume:res,jd},c.token)).text;}
+    else r=await aiGenerate("You are an expert résumé writer. Rewrite the résumé to naturally incorporate the important keywords from the job description while staying truthful to the candidate's real experience. Keep it ATS-friendly, concise, plain text. Never invent employers, titles, or dates.","RESUME:\n"+res+"\n\nJOB DESCRIPTION:\n"+jd,900);
     out.innerHTML=`<div class="section-head"><h3>AI-optimized résumé</h3><span class="pill good">draft</span></div><div style="white-space:pre-wrap;font-size:13px;line-height:1.6;background:var(--surface-2);border-radius:10px;padding:14px;max-height:400px;overflow:auto">${esc(r)}</div><div style="display:flex;gap:8px;margin-top:12px"><button class="btn pri sm" onclick='(navigator.clipboard&&navigator.clipboard.writeText(${JSON.stringify(r)}));toast("Copied","")'>Copy</button></div>`;
   }catch(e){out.innerHTML='<div class="empty" style="color:var(--crit)">'+esc(e.message)+'</div>';}};
 window.scanATS=()=>{
@@ -535,9 +578,11 @@ window.genCover=async()=>{
   const p=S.pipeline.find(x=>x.id===$("#cl-job").value)||S.pipeline[0];
   if(!p){toast("No roles yet","Apply to a role in Job Radar first.","crit");return;}
   const tone=$("#cl-tone").value,hi=$("#cl-hi").value||"delivering measurable impact";const m=S.me||{};const out=$("#cl-out");
-  if(aiCfg()){
+  if(beCfg()||aiCfg()){
     out.innerHTML=`<div class="empty">${icon('<path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4"/>')}<div>Writing your letter with AI…</div></div>`;
-    try{const letter=await aiGenerate(
+    try{let letter;
+      if(beCfg()){const c=beCfg();const d=await apiCall(c.url,"/api/ai/cover-letter","POST",{role:p.role,company:p.co,tone,emphasize:hi,resume:S.profile,name:m.name,headline:m.headline},c.token);letter=d.text;}
+      else letter=await aiGenerate(
       "You are an expert cover-letter writer. Write a concise, specific, non-generic cover letter of about 180 words in first person, "+tone+" tone. No placeholders, no clichés like 'I am writing to express my interest'. Sign off as the candidate.",
       `Candidate: ${m.name||"the candidate"}${m.headline?", "+m.headline:""}. Emphasize: ${hi}. Résumé summary: ${(S.profile||"").slice(0,700)}. Target role: ${p.role} at ${p.co}.`,700);
       out.innerHTML=`<div class="section-head"><h3>${esc(p.co)} — AI draft</h3><span class="pill good">${esc(tone)}</span></div>
@@ -641,10 +686,11 @@ function qCard(i){qi=i;const q=QBANK[i];
     <div class="frame" style="display:none"><b>Model framework · </b>${q[2]}</div>
     <div class="frame aifb" style="display:none;border-left-color:var(--accent)"></div></div>`;}
 window.aiFeedback=async btn=>{const card=btn.closest('.q-card');const ans=(card.querySelector('textarea').value||"").trim();const q=card.querySelector('h3').textContent;const out=card.querySelector('.aifb');
-  if(!aiCfg()){toast("Connect an AI key","Profile → AI engine to enable real feedback.","crit");return;}
+  if(!beCfg()&&!aiCfg()){toast("Enable AI","Profile → Backend (or AI engine) to enable real feedback.","crit");return;}
   if(!ans){toast("Type an answer first","");return;}
   out.style.display='block';out.innerHTML='Analyzing your answer…';btn.disabled=true;
-  try{const fb=await aiGenerate("You are a senior engineering interviewer. Give concise, specific, constructive feedback on the candidate's answer: what is strong, what is missing, and one concrete improvement. Under 120 words.","Question: "+q+"\n\nAnswer: "+ans,400);
+  try{let fb;if(beCfg()){const c=beCfg();fb=(await apiCall(c.url,"/api/ai/interview-feedback","POST",{question:q,answer:ans},c.token)).text;}
+    else fb=await aiGenerate("You are a senior engineering interviewer. Give concise, specific, constructive feedback on the candidate's answer: what is strong, what is missing, and one concrete improvement. Under 120 words.","Question: "+q+"\n\nAnswer: "+ans,400);
     out.innerHTML='<b style="color:var(--accent)">AI feedback · </b>'+esc(fb).replace(/\n/g,'<br>');}
   catch(e){out.innerHTML='<span style="color:var(--crit)">'+esc(e.message)+'</span>';}
   btn.disabled=false;};
@@ -667,9 +713,18 @@ window.ddrop=e=>{e.preventDefault();e.currentTarget.classList.remove('over');con
 
 V.profile=()=>{
   const m=S.me||{};const L=m.links||{};const E=m.empTypes||{};
-  const srcCfg=giraffyCfg();const srcConnected=!!srcCfg.url;const ai=aiCfg();
+  const srcCfg=giraffyCfg();const srcConnected=!!srcCfg.url;const ai=aiCfg();const be=beCfg();
   return `<div class="page-head"><div class="eyebrow">You</div><h1>Your Profile</h1>
-    <p>One source of truth — it drives your match scores, cover letters, outreach signature, and (next) application auto-fill. Saved locally in your browser.</p></div>
+    <p>One source of truth — it drives your match scores, cover letters, outreach signature, and application auto-fill. ${be?`<b style="color:var(--good)">Synced to your backend as ${esc(be.email)}.</b>`:'Saved locally in your browser — connect a backend below to sync across devices.'}</p></div>
+  <div class="card pad" style="margin-bottom:16px;border-left:3px solid var(--good)">
+    <div class="section-head"><h3>Backend ${be?`<span class="pill good">connected · ${esc(be.email)}</span>`:'<span class="pill neutral">local only</span>'}</h3></div>
+    <p class="tiny muted" style="margin:0 0 12px">Connect the GiraffyReach backend for accounts, cross-device sync, server-ranked jobs, and server-side AI (no browser key needed). Run it locally or deploy it — see <b>server/README.md</b> in the repo.</p>
+    ${be?`<div style="display:flex;gap:8px"><button class="btn ghost sm" onclick="beDisconnect()">Disconnect</button></div>`:`
+    <div class="field"><label>API URL</label><input type="text" id="be-url" placeholder="http://localhost:8787"></div>
+    <div class="two" style="gap:12px"><div class="field"><label>Email</label><input type="text" id="be-email" placeholder="you@email.com"></div>
+      <div class="field"><label>Password</label><input type="text" id="be-pw" placeholder="min 8 chars"></div></div>
+    <div style="display:flex;gap:8px"><button class="btn pri sm" onclick="beLogin()">Log in</button><button class="btn sm" onclick="beRegister()">Create account</button></div>`}
+  </div>
   <div class="two">
     <div class="card pad">
       <h3 style="margin-bottom:14px">Identity</h3>
