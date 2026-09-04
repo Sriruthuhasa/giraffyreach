@@ -626,10 +626,18 @@ V.apply=()=>{
   </div>`;
 };
 
+function sampleTimeline(){return `<div class="tl">
+  <div class="tl-item on"><div class="tt">Email sent</div><div class="td">tracked links + open pixel embedded</div></div>
+  <div class="tl-item on"><div class="tt">📭 Opened</div><div class="td">recruiter's mail client loaded the pixel</div></div>
+  <div class="tl-item act"><div class="tt">🔗 Link clicked</div><div class="td">your portfolio / résumé link</div></div>
+  <div class="tl-item"><div class="tt">Awaiting reply</div><div class="td">nudge suggested in 1 day</div></div></div>
+  <div class="demo-note" style="margin-top:12px">This is an illustrative sample — connect a backend in Profile for your real opens & clicks.</div>`;}
+
 V.outreach=()=>{
-  const connected=S.me&&S.me.email;
-  return `<div class="page-head"><div class="eyebrow">Backchannel · Email</div><h1>Recruiter Outreach</h1>
-  <p>Compose a tailored recruiter email and open it in your mail app, pre-filled and ready to send. ${connected?`Sending as <b>${esc(S.me.email)}</b>.`:`<b>Connect your email in <a href="#" onclick="go('profile');return false">Profile</a> first.</b>`}</p></div>
+  const be=beCfg();const m=S.me||{};
+  if(be)setTimeout(()=>{if(beCfg())loadEvents();},60);
+  return `<div class="page-head"><div class="eyebrow">Backchannel · Email · ${be?'LIVE TRACKING':'preview'}</div><h1>Recruiter Outreach</h1>
+  <p>Compose a tailored recruiter email with <b>tracked links</b> and an open-pixel, then open it in your mail app. ${be?`Opens & clicks log to your backend in real time — see the activity feed below.`:`<b>Connect a backend in <a href="#" onclick="go('profile');return false">Profile</a> to record real opens & clicks.</b>`}${m.email?` Sending as <b>${esc(m.email)}</b>.`:''}</p></div>
   <div class="two">
     <div class="card pad">
       <h3 style="margin-bottom:12px">Compose outreach</h3>
@@ -638,15 +646,17 @@ V.outreach=()=>{
       <div class="field"><label>Role</label><select id="o-role" onchange="document.getElementById('o-customwrap').style.display=this.value==='__custom'?'block':'none'">${S.pipeline.map(p=>`<option value="${p.id}">${esc(p.role)} — ${esc(p.co)}</option>`).join("")}<option value="__custom">Custom…</option></select></div>
       <div class="field" id="o-customwrap" style="display:${S.pipeline.length?'none':'block'}"><label>Custom role / company</label><input type="text" id="o-custom" placeholder="Staff AI Engineer at Acme"></div>
       <button class="btn pri" onclick="composeOutreach()">Generate &amp; preview</button>
+      ${be?'':'<div class="demo-note" style="margin-top:10px">Connect a backend for tracked links & open pixel</div>'}
     </div>
-    <div class="card pad" id="o-out"><div class="empty">${icon('<path d="M4 4h16v12H8l-4 4z"/>')}<div>Fill the form and generate — your email preview appears here, then opens in your mail app.</div></div></div>
+    <div class="card pad" id="o-out"><div class="empty">${icon('<path d="M4 4h16v12H8l-4 4z"/>')}<div>Fill the form and generate — the tracked email preview appears here.</div></div></div>
   </div>
-  <div class="card pad" style="margin-top:16px"><h3 style="margin-bottom:10px">Send-from-your-account + open tracking — next tier</h3>
-    <p class="tiny muted" style="margin:0 0 12px">Opening a pre-filled draft works with zero setup. To send automatically from your account and see opens/clicks, you'd add:</p>
-    ${[["Gmail / Graph OAuth (send scope)","real send without leaving the app","good"],["Tracking pixel + link-redirect service","know when it's opened / clicked","teal"],["Decision-maker lookup (Apollo / Hunter)","find the right recruiter","warn"],["Deliverability guardrails","stay out of spam","crit"]].map(([a,b,c])=>`<div class="row"><span class="pill ${c}" style="width:8px;height:8px;padding:0;border-radius:50%"></span><div style="flex:1"><b style="font-size:13.5px">${a}</b><div class="tiny muted">${b}</div></div></div>`).join("")}
+  <div class="card pad" style="margin-top:16px">
+    <div class="section-head"><h3>Tracking activity</h3>${be?`<button class="btn ghost sm" onclick="loadEvents()">↻ Refresh</button>`:'<span class="demo-note">connect backend to enable</span>'}</div>
+    <div id="o-events">${be?'<div class="empty">Loading your opens & clicks…</div>':sampleTimeline()}</div>
   </div>`;
 };
-window.composeOutreach=()=>{
+
+window.composeOutreach=async()=>{
   const roleSel=$("#o-role").value;let role="the role",co="";
   if(roleSel==="__custom"||!roleSel){role=($("#o-custom")&&$("#o-custom").value)||"the role";co="";}
   else{const p=S.pipeline.find(x=>x.id===roleSel);if(p){role=p.role;co=p.co;}}
@@ -654,16 +664,46 @@ window.composeOutreach=()=>{
   const to=$("#o-to").value.trim();
   const m=S.me||{};const me=m.name||"me";
   const subject=`${role}${co?` @ ${co}`:""} — ${me}`;
-  const sig=[m.links&&m.links.linkedin?"LinkedIn: "+m.links.linkedin:"",m.links&&m.links.portfolio?"Portfolio: "+m.links.portfolio:""].filter(Boolean).join("\n");
-  const body=`Hi ${name},\n\nI came across the ${role}${co?` role at ${co}`:""} and it lines up closely with what I do${m.headline?` (${m.headline})`:""}. I've attached my résumé — I'd welcome a quick conversation about how I could contribute.\n\n${sig?sig+"\n\n":""}Thank you for your time,\n${me}${m.phone?"\n"+m.phone:""}${m.email?"\n"+m.email:""}`;
-  $("#o-out").innerHTML=`<div class="section-head"><h3>Preview</h3><span class="pill teal">${to?esc(to):'no recipient yet'}</span></div>
+  const be=beCfg();
+  let pixel="",clickBase="",tracked=false;
+  if(be){
+    try{const t=await apiCall(be.url,"/api/outreach/track","POST",{label:role+(co?" @ "+co:"")},be.token);pixel=t.pixel;clickBase=t.clickBase;tracked=true;}
+    catch(e){toast("Tracking unavailable",e.message,"crit");}
+  }
+  const trk=(url)=>(clickBase&&url)?clickBase+encodeURIComponent(url):url;
+  const li=m.links&&m.links.linkedin, pf=m.links&&m.links.portfolio;
+  const sigLines=[li?"LinkedIn: "+trk(li):"", pf?"Portfolio: "+trk(pf):""].filter(Boolean);
+  const bodyPlain=`Hi ${name},\n\nI came across the ${role}${co?` role at ${co}`:""} and it lines up closely with what I do${m.headline?` (${m.headline})`:""}. I've attached my résumé — I'd welcome a quick conversation about how I could contribute.\n\n${sigLines.length?sigLines.join("\n")+"\n\n":""}Thank you for your time,\n${me}${m.phone?"\n"+m.phone:""}${m.email?"\n"+m.email:""}`;
+  const bodyHtml=bodyPlain.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/\n/g,"<br>")+(pixel?`<img src="${pixel}" width="1" height="1" alt="" style="display:none">`:"");
+  $("#o-out").innerHTML=`<div class="section-head"><h3>Preview ${tracked?'<span class="pill good" style="font-size:10px">tracked</span>':''}</h3><span class="pill teal">${to?esc(to):'no recipient yet'}</span></div>
     <div class="tiny muted" style="margin-bottom:6px"><b>Subject:</b> ${esc(subject)}</div>
-    <div style="white-space:pre-wrap;font-size:13.5px;line-height:1.6;background:var(--surface-2);border-radius:10px;padding:14px;max-height:300px;overflow:auto">${esc(body)}</div>
+    <div style="white-space:pre-wrap;font-size:13.5px;line-height:1.6;background:var(--surface-2);border-radius:10px;padding:14px;max-height:280px;overflow:auto">${esc(bodyPlain)}</div>
+    ${tracked?`<div class="tiny muted" style="margin-top:8px">🔗 Links are wrapped to record <b>clicks</b>. To record <b>opens</b>, use “Copy HTML” and paste into Gmail's compose (rich text) so the pixel loads.</div>`:''}
     <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-      <button class="btn pri sm" onclick='openMail(${JSON.stringify(to)},${JSON.stringify(subject)},${JSON.stringify(body)})'>Open in email app →</button>
-      <button class="btn sm" onclick='(navigator.clipboard&&navigator.clipboard.writeText(${JSON.stringify(body)}));toast("Copied","Email body copied to clipboard")'>Copy body</button>
+      <button class="btn pri sm" onclick='openMail(${JSON.stringify(to)},${JSON.stringify(subject)},${JSON.stringify(bodyPlain)})'>Open in email app →</button>
+      ${tracked?`<button class="btn sm" onclick='(navigator.clipboard&&navigator.clipboard.writeText(${JSON.stringify(bodyHtml)}));toast("HTML copied","Paste into Gmail rich compose to track opens")'>Copy HTML (tracks opens)</button>`:''}
+      <button class="btn sm" onclick='(navigator.clipboard&&navigator.clipboard.writeText(${JSON.stringify(bodyPlain)}));toast("Copied","Email body copied")'>Copy text</button>
     </div>`;
-  toast("Draft ready","Review, then open it in your mail app");
+  toast(tracked?"Tracked email ready":"Draft ready", tracked?"Links tracked · pixel embedded in HTML":"Connect backend for tracking");
+  if(be)setTimeout(loadEvents,600);
+};
+
+window.loadEvents=async()=>{
+  const be=beCfg();const box=document.getElementById('o-events');if(!be||!box)return;
+  try{
+    const d=await apiCall(be.url,"/api/outreach/events","GET",null,be.token);
+    const ev=(d.events||[]);
+    if(!ev.length){box.innerHTML='<div class="empty">No tracking events yet. Generate a tracked email and send it — opens & clicks show up here.</div>';return;}
+    const label={created:'Tracked email created',open:'📭 Opened',click:'🔗 Link clicked'};
+    const cls={open:'on',click:'act'};
+    box.innerHTML=`<div class="tl">`+ev.map(e=>{
+      const when=(()=>{try{return new Date(e.ts).toLocaleString()}catch(_){return e.ts}})();
+      let meta="";
+      if(e.kind==='click'&&e.meta)meta=" · "+esc(e.meta.slice(0,64));
+      else if(e.kind==='open'&&e.meta)meta=" · "+esc((e.meta.split(")")[0]||e.meta).slice(0,44));
+      return `<div class="tl-item ${cls[e.kind]||''}"><div class="tt">${label[e.kind]||esc(e.kind)}${e.label?' — '+esc(e.label):''}</div><div class="td">${when}${meta}</div></div>`;
+    }).join("")+`</div>`;
+  }catch(e){box.innerHTML='<div class="empty" style="color:var(--crit)">'+esc(e.message)+'</div>';}
 };
 
 const QBANK=[

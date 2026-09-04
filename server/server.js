@@ -7,6 +7,7 @@ const db = require("./db");
 const jobsLib = require("./lib/jobs");
 
 const app = express();
+app.set("trust proxy", true); // behind Render's proxy — makes req.protocol reflect X-Forwarded-Proto (https)
 app.use(cors()); // open CORS so the GitHub Pages frontend can call this API
 app.use(express.json({ limit: "1mb" }));
 
