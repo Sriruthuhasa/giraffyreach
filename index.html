@@ -159,6 +159,21 @@ textarea{line-height:1.55;min-height:120px}
 .chips{display:flex;gap:8px;flex-wrap:wrap}
 .chip{font-size:12px;font-weight:600;padding:5px 12px;border-radius:20px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);cursor:pointer}
 .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+/* landing / auth gate */
+.landing{position:fixed;inset:0;z-index:200;background:var(--bg);display:grid;grid-template-columns:1.15fr 1fr;overflow:auto}
+.landing-brand{padding:6vh 5vw;display:flex;flex-direction:column;justify-content:center;gap:16px;background:linear-gradient(160deg,var(--surface-2),var(--bg) 70%);border-right:1px solid var(--line)}
+.landing-brand h1{font-size:clamp(28px,3.6vw,44px);line-height:1.06;font-weight:800;max-width:16ch}
+.landing-brand p{color:var(--ink-3);max-width:46ch;font-size:15px;margin:0}
+.land-feat{list-style:none;padding:0;margin:8px 0 0;display:flex;flex-direction:column;gap:11px}
+.land-feat li{display:flex;gap:11px;align-items:flex-start;font-size:14px;color:var(--ink-2)}
+.land-feat li b{color:var(--ink)}
+.land-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);margin-top:6px;flex:none}
+.landing-form{display:flex;align-items:center;justify-content:center;padding:6vh 5vw}
+.landing-form .card{width:100%;max-width:390px}
+.tabseg{display:flex;background:var(--surface-2);border-radius:10px;padding:4px;margin-bottom:16px}
+.tabseg button{flex:1;border:0;background:none;padding:9px;border-radius:8px;font-weight:600;color:var(--ink-3);cursor:pointer;font-family:inherit;font-size:14px}
+.tabseg button.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+@media(max-width:820px){.landing{grid-template-columns:1fr}.landing-brand{padding:5vh 8vw 3vh;border-right:0;border-bottom:1px solid var(--line)}.landing-brand h1{font-size:26px}.land-feat{display:none}}
 .menu-btn{display:none}
 .scrim{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;display:none}
 .scrim.on{display:block}
@@ -275,7 +290,7 @@ async function beAuth(kind){const url=((document.getElementById('be-url')||{}).v
   }catch(e){toast("Backend error",e.message,"crit");}}
 window.beRegister=()=>beAuth("register");
 window.beLogin=()=>beAuth("login");
-window.beDisconnect=()=>{try{localStorage.removeItem("giraffy.backend")}catch(e){}toast("Backend disconnected","Now using local storage only.","accent");LOADED=false;render('profile');loadJobs();};
+window.beDisconnect=()=>{try{localStorage.removeItem("giraffy.backend");localStorage.removeItem("giraffy.skipAuth")}catch(e){}toast("Signed out","","accent");LOADED=false;showLanding();};
 async function bePull(){const c=beCfg();if(!c)return;
   try{const p=await apiCall(c.url,"/api/profile","GET",null,c.token);if(p.me&&Object.keys(p.me).length)S.me=p.me;if(typeof p.resume==="string"&&p.resume)S.profile=p.resume;
     const pl=await apiCall(c.url,"/api/pipeline","GET",null,c.token);if(pl.pipeline)S.pipeline=pl.pipeline;
@@ -955,9 +970,59 @@ $("#menu").onclick=()=>{$("#nav").classList.add('open');$("#scrim").classList.ad
 $("#scrim").onclick=closeNav;
 let stoTimer;$("#globalsearch").addEventListener('input',e=>{RADSEARCH=e.target.value;clearTimeout(stoTimer);stoTimer=setTimeout(()=>{if(CUR!=="radar")render("radar");else{const f=$("#radarfeed");if(f)f.innerHTML=renderRadar();}},180);});
 
+/* ================= LANDING / AUTH GATE ================= */
+const DEFAULT_BACKEND="https://giraffyreach.onrender.com";
+let LAMODE="login";
+function showLanding(){let el=document.getElementById('landing');if(!el){el=document.createElement('div');el.id='landing';el.className='landing';document.body.appendChild(el);}renderLanding();}
+function hideLanding(){const el=document.getElementById('landing');if(el)el.remove();}
+function renderLanding(){const el=document.getElementById('landing');if(!el)return;
+  el.innerHTML=`
+  <div class="landing-brand">
+    <div class="brand" style="padding:0 0 4px"><div class="spark">🦒</div><div><b>GiraffyReach</b><small>direct-to-source engine</small></div></div>
+    <h1>See roles the hour they post. Apply before the crowd.</h1>
+    <p>GiraffyReach watches company career pages direct-to-source, ranks every role to your profile, and tracks your outreach. Create a free account to sync across every device.</p>
+    <ul class="land-feat">
+      <li><span class="land-dot"></span><div><b>Real-time radar</b> across 100k+ career pages &amp; 19 ATSes</div></li>
+      <li><span class="land-dot"></span><div><b>AI</b> résumés, cover letters &amp; interview prep</div></li>
+      <li><span class="land-dot"></span><div><b>C2C / contract</b> detection, alerts &amp; autopilot</div></li>
+      <li><span class="land-dot"></span><div><b>Recruiter outreach</b> with real open &amp; click tracking</div></li>
+    </ul>
+  </div>
+  <div class="landing-form"><div class="card pad">
+    <h3 style="margin-bottom:14px">${LAMODE==='register'?'Create your account':'Welcome back'}</h3>
+    <div class="tabseg"><button class="${LAMODE==='login'?'on':''}" onclick="laMode('login')">Log in</button><button class="${LAMODE==='register'?'on':''}" onclick="laMode('register')">Create account</button></div>
+    <div class="field"><label>Email</label><input type="text" id="la-email" placeholder="you@email.com" autocomplete="username"></div>
+    <div class="field"><label>Password</label><input type="password" id="la-pw" placeholder="${LAMODE==='register'?'at least 8 characters':'your password'}" autocomplete="current-password" onkeydown="if(event.key==='Enter')laSubmit()"></div>
+    <div id="la-err" class="tiny" style="color:var(--crit);min-height:16px;margin-bottom:8px"></div>
+    <button class="btn pri" id="la-btn" style="width:100%" onclick="laSubmit()">${LAMODE==='register'?'Create account':'Log in'}</button>
+    <button class="btn ghost sm" style="width:100%;margin-top:10px" onclick="skipAuth()">Explore the demo — no account</button>
+    <div class="tiny muted" style="margin-top:12px;text-align:center">Syncs to your GiraffyReach backend · password stored hashed</div>
+  </div></div>`;
+}
+window.laMode=m=>{LAMODE=m;renderLanding();};
+window.laSubmit=async()=>{
+  const email=((document.getElementById('la-email')||{}).value||"").trim();
+  const pw=(document.getElementById('la-pw')||{}).value||"";
+  const err=document.getElementById('la-err'),btn=document.getElementById('la-btn');
+  if(err)err.textContent="";
+  if(!email||!pw){if(err)err.textContent="Enter your email and password.";return;}
+  if(LAMODE==='register'&&pw.length<8){if(err)err.textContent="Password must be at least 8 characters.";return;}
+  if(btn){btn.disabled=true;btn.textContent="…";}
+  try{
+    const d=await apiCall(DEFAULT_BACKEND,"/api/auth/"+LAMODE,"POST",{email,password:pw});
+    localStorage.setItem("giraffy.backend",JSON.stringify({url:DEFAULT_BACKEND,token:d.token,email:d.user.email}));
+    try{localStorage.removeItem("giraffy.skipAuth")}catch(e){}
+    await bePull();updateAvatar();hideLanding();render('dashboard');loadJobs();scheduleRefresh();
+    toast(LAMODE==='register'?"Welcome to GiraffyReach":"Welcome back",d.user.email,"accent");
+  }catch(e){if(err)err.textContent=(/invalid credentials/i.test(e.message)?"Wrong email or password.":/already registered/i.test(e.message)?"That email already has an account — log in instead.":e.message);if(btn){btn.disabled=false;btn.textContent=LAMODE==='register'?'Create account':'Log in';}}
+};
+window.skipAuth=()=>{try{localStorage.setItem("giraffy.skipAuth","1")}catch(e){}hideLanding();toast("Exploring the demo","Local mode — create an account anytime from Profile");};
+window.signOut=()=>{try{localStorage.removeItem("giraffy.backend");localStorage.removeItem("giraffy.skipAuth")}catch(e){}location.reload();};
+
 render('dashboard');
 loadJobs();
 scheduleRefresh();
+if(!beCfg() && !(function(){try{return localStorage.getItem('giraffy.skipAuth')}catch(e){return false}})()) showLanding();
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&AUTOREFRESH>0&&Date.now()-lastRefresh>AUTOREFRESH*60000)doRefresh();});
 </script>
 </body>
