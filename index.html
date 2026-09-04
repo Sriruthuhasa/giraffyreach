@@ -235,6 +235,26 @@ async function fetchGiraffy(){
   try{const r=await fetch(c.url,{headers:c.key?{"Authorization":"Bearer "+c.key}:{}});if(!r.ok)throw 0;return adaptGiraffy(await r.json());}
   catch(e){return null;}
 }
+
+/* ============================================================
+   AI ENGINE — bring your own key (Claude or OpenAI)
+   Key is stored ONLY in this browser and sent only to the AI
+   provider you choose. Use a scoped / budget-limited key.
+   ============================================================ */
+function aiCfg(){try{const c=JSON.parse(localStorage.getItem("giraffy.ai"));if(c&&c.key)return c;}catch(e){}return null;}
+async function aiGenerate(system,user,maxTokens){
+  const cfg=aiCfg();if(!cfg)throw new Error("No AI key configured (Profile → AI engine)");
+  if((cfg.provider||"claude")==="openai"){
+    const r=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",headers:{"Authorization":"Bearer "+cfg.key,"content-type":"application/json"},
+      body:JSON.stringify({model:cfg.model||"gpt-4o",max_tokens:maxTokens||800,messages:[{role:"system",content:system},{role:"user",content:user}]})});
+    if(!r.ok)throw new Error("OpenAI "+r.status+": "+(await r.text()).slice(0,140));
+    const d=await r.json();return (d.choices&&d.choices[0]&&d.choices[0].message.content||"").trim();
+  }
+  const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"x-api-key":cfg.key,"anthropic-version":"2023-06-01","content-type":"application/json","anthropic-dangerous-direct-browser-access":"true"},
+    body:JSON.stringify({model:cfg.model||"claude-opus-5",max_tokens:maxTokens||800,system:system,messages:[{role:"user",content:user}]})});
+  if(!r.ok)throw new Error("Claude "+r.status+": "+(await r.text()).slice(0,140));
+  const d=await r.json();return (d.content||[]).filter(b=>b.type==="text").map(b=>b.text).join("\n").trim();
+}
 const MAX_PER_BOARD=40;
 
 async function fetchBoard(b){
@@ -393,6 +413,7 @@ const NAV=[
   ["outreach","Recruiter Outreach",'<path d="M4 4h16v12H8l-4 4z"/><path d="M9 9h6M9 12h4"/>'],
   ["interview","Interview Prep",'<path d="M12 3a4 4 0 0 1 4 4v3a4 4 0 0 1-8 0V7a4 4 0 0 1 4-4z"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>'],
   ["tracker","Tracker",'<path d="M4 5h16M4 12h16M4 19h10"/>'],
+  ["analytics","Analytics",'<path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/>'],
   ["features","All Features",'<path d="M12 2 3 7l9 5 9-5zM3 12l9 5 9-5M3 17l9 5 9-5"/>'],
 ];
 
@@ -475,11 +496,18 @@ V.resume=()=>`<div class="page-head"><div class="eyebrow">Materials · Prep · R
       <div class="field"><label>Your resume text</label><textarea id="res-r" placeholder="Paste resume…">${esc(S.profile)}</textarea></div>
       <div class="field"><label>Target job description</label><textarea id="res-j" placeholder="Paste a job description…">We seek a Staff AI Engineer skilled in Python, LLM fine-tuning, RAG, vector databases, AWS, Kubernetes, distributed training, and MLOps. Experience with evaluation, prompt engineering, and PyTorch required. Strong SQL and data pipeline skills.</textarea></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn pri" onclick="scanATS()">${icon('<path d="M12 3v18M3 12h18"/>')} Scan</button>
+        <button class="btn" onclick="aiOptimize()">✨ AI optimize</button>
         <button class="btn" onclick="saveProfile()">Save as my profile</button></div>
     </div>
     <div class="card pad" id="ats-out"><div class="empty">${icon('<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>')}<div>Run a scan to see your real ATS match score and missing keywords.</div></div></div>
   </div>`;
 window.saveProfile=()=>{S.profile=$("#res-r").value;save();rankJobs();toast("Profile saved","Radar match scores updated to your resume.","accent");};
+window.aiOptimize=async()=>{if(!aiCfg()){toast("Connect an AI key","Profile → AI engine to enable this.","crit");return;}
+  const res=($("#res-r").value||""),jd=($("#res-j").value||"");const out=$("#ats-out");
+  out.innerHTML=`<div class="empty">${icon('<path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M2 12h4M18 12h4"/>')}<div>Optimizing your résumé with AI…</div></div>`;
+  try{const r=await aiGenerate("You are an expert résumé writer. Rewrite the résumé to naturally incorporate the important keywords from the job description while staying truthful to the candidate's real experience. Keep it ATS-friendly, concise, plain text. Never invent employers, titles, or dates.","RESUME:\n"+res+"\n\nJOB DESCRIPTION:\n"+jd,900);
+    out.innerHTML=`<div class="section-head"><h3>AI-optimized résumé</h3><span class="pill good">draft</span></div><div style="white-space:pre-wrap;font-size:13px;line-height:1.6;background:var(--surface-2);border-radius:10px;padding:14px;max-height:400px;overflow:auto">${esc(r)}</div><div style="display:flex;gap:8px;margin-top:12px"><button class="btn pri sm" onclick='(navigator.clipboard&&navigator.clipboard.writeText(${JSON.stringify(r)}));toast("Copied","")'>Copy</button></div>`;
+  }catch(e){out.innerHTML='<div class="empty" style="color:var(--crit)">'+esc(e.message)+'</div>';}};
 window.scanATS=()=>{
   const res=($("#res-r").value||"").toLowerCase(),jd=($("#res-j").value||"").toLowerCase();
   const stop=new Set("the a an and or to of in on for with we you seek skilled experience required strong is are as at be by from this that our your role team".split(" "));
@@ -501,14 +529,25 @@ V.cover=()=>`<div class="page-head"><div class="eyebrow">Materials · Prep</div>
     <div class="field"><label>Tone</label><select id="cl-tone"><option>Confident & direct</option><option>Warm & personable</option><option>Formal</option></select></div>
     <div class="field"><label>One thing to emphasize</label><input type="text" id="cl-hi" value="shipping LLM systems end-to-end, fast"></div>
     <button class="btn pri" onclick="genCover()">Generate letter</button>
-    <div class="demo-note" style="margin-top:12px">Template demo — real LLM generation needs a backend/API key</div></div>
+    <div class="demo-note" style="margin-top:12px">${aiCfg()?'✨ Real AI generation via your connected key':'Add an AI key in Profile for real AI — on-device template used otherwise'}</div></div>
     <div class="card pad" id="cl-out"><div class="empty">${icon('<path d="M3 5h18v14H3z"/><path d="m3 6 9 7 9-7"/>')}<div>Pick a role and generate.</div></div></div></div>`;
-window.genCover=()=>{
+window.genCover=async()=>{
   const p=S.pipeline.find(x=>x.id===$("#cl-job").value)||S.pipeline[0];
   if(!p){toast("No roles yet","Apply to a role in Job Radar first.","crit");return;}
-  const tone=$("#cl-tone").value,hi=$("#cl-hi").value||"delivering measurable impact";
-  const body=`Dear ${p.co} Hiring Team,\n\nWhen I saw the ${p.role} role open at ${p.co}, it read like the job I've been preparing for. Over the past several years I've focused on ${hi} — and your team's work is exactly where I want to point that next.\n\nI've owned LLM platform work end to end: retrieval pipelines, fine-tuning, evaluation harnesses, and the production plumbing that keeps it reliable. I move fast without breaking the parts that matter.\n\nI'd love to show you what I can do for ${p.co}. Thank you for considering me.\n\nWarmly,\nSri Komma`;
-  $("#cl-out").innerHTML=`<div class="section-head"><h3>${esc(p.co)} — draft</h3><span class="pill teal">${esc(tone)}</span></div>
+  const tone=$("#cl-tone").value,hi=$("#cl-hi").value||"delivering measurable impact";const m=S.me||{};const out=$("#cl-out");
+  if(aiCfg()){
+    out.innerHTML=`<div class="empty">${icon('<path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4"/>')}<div>Writing your letter with AI…</div></div>`;
+    try{const letter=await aiGenerate(
+      "You are an expert cover-letter writer. Write a concise, specific, non-generic cover letter of about 180 words in first person, "+tone+" tone. No placeholders, no clichés like 'I am writing to express my interest'. Sign off as the candidate.",
+      `Candidate: ${m.name||"the candidate"}${m.headline?", "+m.headline:""}. Emphasize: ${hi}. Résumé summary: ${(S.profile||"").slice(0,700)}. Target role: ${p.role} at ${p.co}.`,700);
+      out.innerHTML=`<div class="section-head"><h3>${esc(p.co)} — AI draft</h3><span class="pill good">${esc(tone)}</span></div>
+        <div style="white-space:pre-wrap;font-size:13.5px;line-height:1.65;background:var(--surface-2);border-radius:10px;padding:16px;max-height:360px;overflow:auto">${esc(letter)}</div>
+        <div style="display:flex;gap:8px;margin-top:14px"><button class="btn pri sm" onclick='(navigator.clipboard&&navigator.clipboard.writeText(${JSON.stringify(letter)}));toast("Copied","Letter copied to clipboard")'>Copy</button><button class="btn sm" onclick="genCover()">Regenerate</button></div>`;
+      toast("Cover letter written","Real AI draft for "+p.co);return;
+    }catch(e){toast("AI error — used template",e.message,"crit");}
+  }
+  const body=`Dear ${p.co} Hiring Team,\n\nWhen I saw the ${p.role} role open at ${p.co}, it read like the job I've been preparing for. Over the past several years I've focused on ${hi} — and your team's work is exactly where I want to point that next.\n\nI've owned LLM platform work end to end: retrieval pipelines, fine-tuning, evaluation harnesses, and the production plumbing that keeps it reliable. I move fast without breaking the parts that matter.\n\nI'd love to show you what I can do for ${p.co}. Thank you for considering me.\n\nWarmly,\n${m.name||"Sri Komma"}`;
+  out.innerHTML=`<div class="section-head"><h3>${esc(p.co)} — draft</h3><span class="pill teal">${esc(tone)}</span></div>
     <div style="white-space:pre-wrap;font-size:13.5px;line-height:1.65;background:var(--surface-2);border-radius:10px;padding:16px;max-height:360px;overflow:auto">${esc(body)}</div>
     <div style="display:flex;gap:8px;margin-top:14px"><button class="btn sm" onclick="genCover()">Regenerate</button></div>`;
   toast("Cover letter drafted","In your voice for "+p.co);};
@@ -598,8 +637,17 @@ function qCard(i){qi=i;const q=QBANK[i];
   return `<div class="q-card"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span class="pill accent">${q[0]}</span><span class="q-num">Q${i+1}</span></div>
     <h3 style="font-size:19px;line-height:1.3;margin-bottom:6px">${q[1]}</h3>
     <textarea placeholder="Type your answer…" style="min-height:96px"></textarea>
-    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn sm" onclick="showFrame(this)">Show model framework</button><button class="btn pri sm" onclick="nextQ()" ${i>=QBANK.length-1?'disabled':''}>Next →</button></div>
-    <div class="frame" style="display:none"><b>Model framework · </b>${q[2]}</div></div>`;}
+    <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap"><button class="btn sm" onclick="showFrame(this)">Show model framework</button><button class="btn sm" onclick="aiFeedback(this)">✨ AI feedback</button><button class="btn pri sm" onclick="nextQ()" ${i>=QBANK.length-1?'disabled':''}>Next →</button></div>
+    <div class="frame" style="display:none"><b>Model framework · </b>${q[2]}</div>
+    <div class="frame aifb" style="display:none;border-left-color:var(--accent)"></div></div>`;}
+window.aiFeedback=async btn=>{const card=btn.closest('.q-card');const ans=(card.querySelector('textarea').value||"").trim();const q=card.querySelector('h3').textContent;const out=card.querySelector('.aifb');
+  if(!aiCfg()){toast("Connect an AI key","Profile → AI engine to enable real feedback.","crit");return;}
+  if(!ans){toast("Type an answer first","");return;}
+  out.style.display='block';out.innerHTML='Analyzing your answer…';btn.disabled=true;
+  try{const fb=await aiGenerate("You are a senior engineering interviewer. Give concise, specific, constructive feedback on the candidate's answer: what is strong, what is missing, and one concrete improvement. Under 120 words.","Question: "+q+"\n\nAnswer: "+ans,400);
+    out.innerHTML='<b style="color:var(--accent)">AI feedback · </b>'+esc(fb).replace(/\n/g,'<br>');}
+  catch(e){out.innerHTML='<span style="color:var(--crit)">'+esc(e.message)+'</span>';}
+  btn.disabled=false;};
 window.showFrame=b=>{const f=b.closest('.q-card').querySelector('.frame');f.style.display=f.style.display==='none'?'block':'none';};
 window.nextQ=()=>{if(qi<QBANK.length-1){$("#qwrap").innerHTML=qCard(qi+1);$("#qprog").textContent=(qi+1)+" / "+QBANK.length;}};
 
@@ -619,7 +667,7 @@ window.ddrop=e=>{e.preventDefault();e.currentTarget.classList.remove('over');con
 
 V.profile=()=>{
   const m=S.me||{};const L=m.links||{};const E=m.empTypes||{};
-  const srcCfg=giraffyCfg();const srcConnected=!!srcCfg.url;
+  const srcCfg=giraffyCfg();const srcConnected=!!srcCfg.url;const ai=aiCfg();
   return `<div class="page-head"><div class="eyebrow">You</div><h1>Your Profile</h1>
     <p>One source of truth — it drives your match scores, cover letters, outreach signature, and (next) application auto-fill. Saved locally in your browser.</p></div>
   <div class="two">
@@ -668,6 +716,14 @@ V.profile=()=>{
         <div class="field"><label>API key <span class="tiny muted">(optional · sent as Bearer)</span></label><input type="text" id="p-src-key" value="${esc(srcCfg.key||'')}" placeholder="optional"></div>
         <div style="display:flex;gap:8px"><button class="btn pri sm" onclick="connectSource()">${srcConnected?'Update / reconnect':'Connect live feed'}</button>${srcConnected?'<button class="btn ghost sm" onclick="clearSource()">Disconnect</button>':''}</div>
       </div>
+      <div class="card pad" style="border-left:3px solid var(--teal)">
+        <div class="section-head"><h3>AI engine</h3>${ai?`<span class="pill good">connected · ${esc(ai.provider||'claude')}</span>`:'<span class="pill neutral">templates</span>'}</div>
+        <p class="tiny muted" style="margin:0 0 10px">Bring your own key for real AI cover letters, résumé optimization, and interview feedback. Stored only in this browser and sent only to the provider you pick — use a scoped, budget-limited key.</p>
+        <div class="two" style="gap:12px"><div class="field"><label>Provider</label><select id="p-ai-provider">${["claude","openai"].map(o=>`<option value="${o}" ${ai&&ai.provider===o?'selected':''}>${o==='claude'?'Anthropic Claude':'OpenAI'}</option>`).join("")}</select></div>
+          <div class="field"><label>Model <span class="tiny muted">(optional)</span></label><input type="text" id="p-ai-model" value="${esc((ai&&ai.model)||'')}" placeholder="claude-opus-5"></div></div>
+        <div class="field"><label>API key</label><input type="text" id="p-ai-key" value="${esc((ai&&ai.key)||'')}" placeholder="sk-…"></div>
+        <div style="display:flex;gap:8px"><button class="btn pri sm" onclick="connectAI()">${ai?'Update':'Connect AI'}</button>${ai?'<button class="btn ghost sm" onclick="clearAI()">Disconnect</button>':''}</div>
+      </div>
     </div>
   </div>
   <div class="card pad" style="margin-top:16px">
@@ -692,7 +748,39 @@ window.connectSource=()=>{const u=(document.getElementById('p-src-url')||{}).val
   toast(u.trim()?"Source connected":"No URL entered",u.trim()?"Reloading with your live GiraffyReach feed…":"Enter your endpoint URL first","accent");
   if(u.trim()){LOADED=false;render(CUR);loadJobs();}};
 window.clearSource=()=>{try{localStorage.removeItem("giraffy.source")}catch(e){}toast("Disconnected","Back to public sample sources","accent");LOADED=false;render(CUR);loadJobs();};
+window.connectAI=()=>{const provider=(document.getElementById('p-ai-provider')||{}).value||"claude";const key=((document.getElementById('p-ai-key')||{}).value||"").trim();const model=((document.getElementById('p-ai-model')||{}).value||"").trim();
+  if(!key){toast("Enter your API key first","","crit");return;}
+  try{localStorage.setItem("giraffy.ai",JSON.stringify({provider,key,model}))}catch(e){}
+  toast("AI connected","Real generation on for cover letters, résumé & interview.","accent");render('profile');};
+window.clearAI=()=>{try{localStorage.removeItem("giraffy.ai")}catch(e){}toast("AI disconnected","Back to on-device templates.","accent");render('profile');};
 
+V.analytics=()=>{
+  const c={};STAGES.forEach(s=>c[s]=S.pipeline.filter(p=>p.stage===s).length);
+  const total=S.pipeline.length;
+  const applied=c.Applied+c.Recruiter+c.Interview+c.Offer+c.Rejected;
+  const reachedRecruiter=c.Recruiter+c.Interview+c.Offer;
+  const reachedInterview=c.Interview+c.Offer;
+  const pct=(a,b)=>b?Math.round(a/b*100):0;
+  const bySrc={};JOBS.forEach(j=>bySrc[j.ats]=(bySrc[j.ats]||0)+1);
+  const buckets={"90–100":0,"80–89":0,"70–79":0,"<70":0};JOBS.forEach(j=>{if(j.match>=90)buckets["90–100"]++;else if(j.match>=80)buckets["80–89"]++;else if(j.match>=70)buckets["70–79"]++;else buckets["<70"]++;});
+  const bar=(label,val,max,color)=>`<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px"><span class="tiny mono" style="width:100px;color:var(--ink-3)">${label}</span><div style="flex:1;height:10px;background:var(--surface-2);border-radius:20px;overflow:hidden"><i style="display:block;height:100%;width:${max?Math.max(3,Math.round(val/max*100)):0}%;background:${color||'var(--accent)'};border-radius:20px"></i></div><b class="mono tiny" style="width:34px;text-align:right">${val}</b></div>`;
+  const maxStage=Math.max(1,...STAGES.map(s=>c[s]));const maxSrc=Math.max(1,...Object.values(bySrc));const maxB=Math.max(1,...Object.values(buckets));
+  return `<div class="page-head"><div class="eyebrow">Insight</div><h1>Analytics</h1>
+    <p>Your real pipeline funnel and live-feed composition — computed from your tracker and the current radar, not placeholders.</p></div>
+  <div class="stats">
+    <div class="stat"><div class="k">In pipeline</div><div class="v">${total}</div><div class="d">roles tracked</div></div>
+    <div class="stat"><div class="k">Reply rate</div><div class="v">${pct(reachedRecruiter,applied)}%</div><div class="d">applied → recruiter</div></div>
+    <div class="stat"><div class="k">Interview rate</div><div class="v">${pct(reachedInterview,applied)}%</div><div class="d">applied → interview</div></div>
+    <div class="stat"><div class="k">Offers</div><div class="v">${c.Offer}</div><div class="d">${pct(c.Offer,applied)}% of applied</div></div>
+  </div>
+  <div class="two">
+    <div class="card pad"><h3 style="margin-bottom:14px">Pipeline funnel</h3>${STAGES.map(s=>bar(STAGE_LABEL[s],c[s],maxStage,s==='Offer'?'var(--good)':s==='Rejected'?'var(--crit)':'linear-gradient(90deg,var(--accent),#E6C06A)')).join("")}${total?'':'<div class="tiny muted" style="margin-top:6px">Apply to roles from the Radar to populate your funnel.</div>'}</div>
+    <div class="grid">
+      <div class="card pad"><h3 style="margin-bottom:14px">Live feed by source</h3>${Object.keys(bySrc).length?Object.entries(bySrc).sort((a,b)=>b[1]-a[1]).map(([k,v])=>bar(k,v,maxSrc,'var(--teal)')).join(""):'<div class="tiny muted">Feed loading…</div>'}</div>
+      <div class="card pad"><h3 style="margin-bottom:14px">Match distribution</h3>${Object.entries(buckets).map(([k,v])=>bar(k,v,maxB,'var(--accent)')).join("")}</div>
+    </div>
+  </div>`;
+};
 V.alerts=()=>{
   const perm=("Notification" in window)?Notification.permission:"unsupported";
   return `<div class="page-head"><div class="eyebrow">Be first</div><h1>Alerts &amp; Saved Searches</h1>
